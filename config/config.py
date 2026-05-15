@@ -28,15 +28,16 @@ flags.DEFINE_integer('train', 1, '1 for training mode, 0 for evaluation/inferenc
 flags.DEFINE_integer('num_workers', 0, 'Number of DataLoader workers.')
 flags.DEFINE_integer('batch_size', 16, 'Batch size.')
 flags.DEFINE_integer('total_epoch', 400, 'Total number of training epochs.')
-flags.DEFINE_integer('warm_up_epoch', 0, 'Number of warm-up epochs.')
-flags.DEFINE_integer('train_steps', 10, 'Number of training iterations per epoch.')
+flags.DEFINE_integer('warm_up_epoch', 10, 'Number of warm-up epochs.')
+flags.DEFINE_integer('train_steps', 1000, 'Number of training iterations per epoch.')
 flags.DEFINE_integer('accumulate', 1, 'Gradient accumulation steps.')
 
 # Checkpoint / Logging Settings
-flags.DEFINE_string('model_save', '/home/chenwenxiao/IJCAI-2026_save/modelsave_all', 'Directory for saving checkpoints, logs, and TensorBoard files.')
+flags.DEFINE_string('model_save', '/home/chenwenxiao/code/modelsave_all', 'Directory for saving checkpoints, logs, and TensorBoard files.')
 flags.DEFINE_integer('resume', 0, 'Whether to resume training from checkpoint.')
-flags.DEFINE_string('resume_model', '/home/chenwenxiao/IJCAI-2026_save/modelsave_all/Slider_Button/ckpt_save_K128/best_all.pth', 'Path of checkpoint used for resuming training.')
+flags.DEFINE_string('resume_model', '', 'Path of checkpoint used for resuming training.')
 flags.DEFINE_integer('resume_point', 300, 'Epoch index to resume from.')
+flags.DEFINE_string('test_model', '', 'Path of checkpoint used for test-only evaluation.')
 
 # Main Loss Weights
 flags.DEFINE_float('recon_w', 8.0, 'Weight for reconstruction loss.')

@@ -3,4 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="cassidy" />
   </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.13.12 (sftp://chenwenxiao@114.213.214.86:22/home/chenwenxiao/miniconda3/bin/python3)" project-jdk-type="Python SDK" />
 </project>

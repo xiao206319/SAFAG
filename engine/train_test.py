@@ -1,5 +1,6 @@
 import os
 from tqdm import tqdm
+from config.config import *
 import torch
 import torch.nn.functional as F
 from absl import app
@@ -37,59 +38,78 @@ def quaternion_to_rotation_matrix(quat):
 
     return rot_mat
 
-def rot_error_axis_symmetric(R1, R2, sym_axis, eps=1e-8):
-    if not torch.is_tensor(R1): R1 = torch.tensor(R1)
-    if not torch.is_tensor(R2): R2 = torch.tensor(R2)
-    if not torch.is_tensor(sym_axis): sym_axis = torch.tensor(sym_axis)
+def rot_error_axis_symmetric(R1, R2, eps=1e-8):
+    if not torch.is_tensor(R1):
+        R1 = torch.tensor(R1, dtype=torch.float32)
+    if not torch.is_tensor(R2):
+        R2 = torch.tensor(R2, dtype=torch.float32)
 
-    device, dtype = R1.device, R1.dtype
-    R1, R2 = R1.to(device, dtype), R2.to(device, dtype)
-    sym_axis = F.normalize(sym_axis.to(device, dtype), dim=0, eps=eps)
+    device_, dtype = R1.device, R1.dtype
+    R1 = R1.to(device_, dtype)
+    R2 = R2.to(device_, dtype)
+
+    if FLAGS.gapart == 'Round_Fixed_Handle':
+        sym_axis = torch.tensor([0.0, 1.0, 0.0], device=device_, dtype=dtype)
+    else:
+        sym_axis = torch.tensor([0.0, 0.0, 1.0], device=device_, dtype=dtype)
+
+    sym_axis = F.normalize(sym_axis, dim=0, eps=eps)
 
     v1 = F.normalize(R1 @ sym_axis, dim=0, eps=eps)
     v2 = F.normalize(R2 @ sym_axis, dim=0, eps=eps)
 
     cosang = torch.abs(torch.dot(v1, v2)).clamp(-1.0, 1.0)
     theta = torch.acos(cosang) * 180.0 / torch.pi
-    return theta
+
+    return theta.item() if torch.is_tensor(theta) else theta
 
 def householder_from_normal(n: torch.Tensor) -> torch.Tensor:
-
     n = n / (n.norm(dim=-1, keepdim=True) + 1e-8)
     I = torch.eye(3, device=n.device, dtype=n.dtype).expand(*n.shape[:-1], 3, 3)
     nnT = n.unsqueeze(-1) @ n.unsqueeze(-2)
     return I - 2.0 * nnT
 
-def generate_equiv_poses_single(R_gt: torch.Tensor, normals: list) -> torch.Tensor:
 
-    M = len(normals)
+def generate_equiv_poses_single(R_gt: torch.Tensor) -> torch.Tensor:
+    device = R_gt.device
+    dtype = R_gt.dtype
+
+    normals = [
+        torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype),
+        torch.tensor([0.0, 1.0, 0.0], device=device, dtype=dtype),
+        torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype),
+    ]
+
     S_list = [householder_from_normal(n) for n in normals]
-    I3 = torch.eye(3, device=R_gt.device, dtype=R_gt.dtype)
+    I3 = torch.eye(3, device=device, dtype=dtype)
 
-    combos = list(itertools.product([0, 1], repeat=M))
+    combos = list(itertools.product([0, 1], repeat=len(normals)))
+
     R_equivs = []
     for combo in combos:
         S_combo = I3.clone()
+
         for k, flip in enumerate(combo):
             if flip:
                 S_combo = S_list[k] @ S_combo
+
         R_equivs.append(R_gt @ S_combo)
 
     return torch.stack(R_equivs, dim=0)
 
 
-def mirror_normal_error_multi(R1, R2, normals, eps=1e-8):
+def mirror_normal_error_multi(R1, R2, eps=1e-8):
 
-    if not torch.is_tensor(R1): R1 = torch.tensor(R1, dtype=torch.float32)
-    if not torch.is_tensor(R2): R2 = torch.tensor(R2, dtype=torch.float32)
-    if not torch.is_tensor(normals): normals = torch.tensor(normals, dtype=torch.float32)
+    if not torch.is_tensor(R1):
+        R1 = torch.tensor(R1, dtype=torch.float32)
+    if not torch.is_tensor(R2):
+        R2 = torch.tensor(R2, dtype=torch.float32)
 
     device, dtype = R1.device, R1.dtype
     R1 = R1.to(device=device, dtype=dtype)
     R2 = R2.to(device=device, dtype=dtype)
-    normals = F.normalize(normals.to(device=device, dtype=dtype), dim=-1, eps=eps)
 
-    R_equivs = generate_equiv_poses_single(R1, normals)
+    R_equivs = generate_equiv_poses_single(R1)
 
     errs = []
     for R_eq in R_equivs:
@@ -101,9 +121,8 @@ def mirror_normal_error_multi(R1, R2, normals, eps=1e-8):
 
     errs = torch.stack(errs)
     min_err = errs.min()
+
     return (min_err * 180.0 / torch.pi).item()
-
-
 
 def rot_error(r_gt,r_pred):
     R1 = r_gt / np.cbrt(np.linalg.det(r_gt))
@@ -123,10 +142,14 @@ def train(argv):
     tf.compat.v1.disable_eager_execution()
     tb_writter = tf.compat.v1.summary.FileWriter(FLAGS.model_save)
 
+    log_path = os.path.join(FLAGS.model_save, FLAGS.gapart)
+    if not os.path.exists(log_path):
+        os.makedirs(log_path)
+
     logger = setup_logger('train_log', os.path.join(FLAGS.model_save, 'log.txt'))
     logger_save = setup_logger('save_log', os.path.join(FLAGS.model_save, f'val_log_{FLAGS.gapart}_save.txt'))
-    logger_test = setup_logger('val_log',os.path.join(FLAGS.model_save, f'val_log_{FLAGS.gapart}_new.txt'))
-    logger_loss = setup_logger('loss_log', os.path.join(FLAGS.model_save, f'loss_log_{FLAGS.gapart}_new.txt'))
+    logger_test = setup_logger('val_log',os.path.join(FLAGS.model_save, f'val_log_{FLAGS.gapart}_val.txt'))
+    logger_loss = setup_logger('loss_log', os.path.join(FLAGS.model_save, f'loss_log_{FLAGS.gapart}_loss.txt'))
 
     network = SAFAG(gapart=FLAGS.gapart)
     network = network.to(device)
@@ -261,13 +284,6 @@ def train(argv):
                     quaternion_candidates = output_dict_val['candidates']
                     gt_quaternion = output_dict_val['gt_quaternion']
                     assert gt_quaternion.shape[0] == quaternion_candidates.shape[0],'data failed !'
-                    bs = gt_quaternion.shape[0]
-                    sampling_idx = random.randint(0,bs-1)
-                    root = os.path.join(f'/home/chenwenxiao/IJCAI-2026/visualization/{FLAGS.gapart}/intra',str(epoch))
-                    os.makedirs(root, exist_ok=True)
-                    filename = 'visu_'+str(sampling_idx)+'.png'
-                    path = os.path.join(root,filename)
-                    visualize_candidates_on_sphere(quaternion_candidates[sampling_idx],gt_quaternion[sampling_idx],path)
                     continue
 
                 pred_quarternion_list = output_dict_val['Pred_Q']
@@ -289,11 +305,6 @@ def train(argv):
                 else:
                     sym = int(data['sym_info'])
 
-
-                if sym == 2:
-                    n1, n2, n3 = output_dict_val['sym_normals']
-                    sym_normals = torch.stack((n1, n2, n3), dim=1).to(device)
-
                 assert len(gt_rot_list)==len(gt_trans_list),'data loading failed'
 
                 total_angle_diff = 0
@@ -312,11 +323,9 @@ def train(argv):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
                     if (sym == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,
-                                                              output_dict_val['weighted_axis'][j, :])
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
                     if (sym == 2):
-                        selected = sym_normals[j, :].cpu().numpy()
-                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation, selected)
+                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
 
                     if not math.isnan(angle_diff):
                         translation_diff = np.linalg.norm(gt_translation - pred_translation)
@@ -328,7 +337,6 @@ def train(argv):
                             count_5deg_5cm += 1
                         if angle_diff <= 5 and translation_diff <= 0.02:
                             count_5deg_2cm += 1
-
 
                     if(np.any(np.isnan(np.abs(pred_translation-gt_translation)))):
                         nan_count = nan_count + 1
@@ -400,13 +408,6 @@ def train(argv):
                     quaternion_candidates = output_dict_val['candidates']
                     gt_quaternion = output_dict_val['gt_quaternion']
                     assert gt_quaternion.shape[0] == quaternion_candidates.shape[0],'data failed !'
-                    bs = gt_quaternion.shape[0]
-                    sampling_idx = random.randint(0,bs-1)
-                    root = os.path.join(f'/home/chenwenxiao/IJCAI-2026/visualization/{FLAGS.gapart}/inter',str(epoch))
-                    os.makedirs(root, exist_ok=True)
-                    filename = 'visu_'+str(sampling_idx)+'.png'
-                    path = os.path.join(root,filename)
-                    visualize_candidates_on_sphere(quaternion_candidates[sampling_idx],gt_quaternion[sampling_idx],path)
                     continue
 
                 pred_quarternion_list = output_dict_val['Pred_Q']
@@ -414,10 +415,6 @@ def train(argv):
                 pred_rot_list = quaternion_to_rotation_matrix(pred_quarternion_list)
                 gt_rot_list = output_dict_val['gt_R'].to(device)
                 gt_trans_list = output_dict_val['gt_t'].to(device)
-
-                if sym == 2:
-                    n1, n2, n3 = output_dict_val['sym_normals']
-                    sym_normals = torch.stack((n1, n2, n3), dim=1).to(device)
 
                 assert len(gt_rot_list)==len(gt_trans_list),'data loading failed'
 
@@ -433,15 +430,13 @@ def train(argv):
                     gt_rotation = gt_rot_list[j,:,:].cpu().numpy()
                     gt_translation = gt_trans_list[j,:].cpu().numpy()
 
-                    if(data['sym_info']== 0):
+                    if(sym== 0):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
-                    if (data['sym_info'] == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,
-                                                              output_dict_val['weighted_axis'][j, :])
+                    if (sym == 1):
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
                     if (sym == 2):
-                        selected = sym_normals[j, :].cpu().numpy()
-                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation, selected)
+                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
 
                     if not math.isnan(angle_diff):
                         translation_diff = np.linalg.norm(gt_translation - pred_translation)
@@ -504,10 +499,52 @@ def train(argv):
 
         logger.info('>>>>>>>>----------Epoch {:02d} train finish---------<<<<<<<<\n'.format(epoch))
 
-        save_dir = os.path.join(FLAGS.model_save, FLAGS.gapart)
-        os.makedirs(save_dir, exist_ok=True)
+        # ---------- 前 10 个 epoch 不参与 ----------
+        if epoch > 10:
+            os.makedirs(log_path, exist_ok=True)
 
-        ckpt_path = os.path.join(save_dir, f'{epoch}.pth')
+            # ========= 1. intra best =========
+            if average_rot_diff_per_batch_intra < best_intra_rot_diff:
+                best_intra_rot_diff = average_rot_diff_per_batch_intra
+
+                ckpt_path = os.path.join(log_path, 'best_intra.pth')
+                torch.save(network.state_dict(), ckpt_path)
+
+                logger_save.info(
+                    f'[CKPT SAVED][INTRA] Epoch {epoch} | '
+                    f'best_intra_rot_diff = {best_intra_rot_diff:.4f}'
+                )
+
+            # ========= 2. inter best =========
+            if average_rot_diff_per_batch_inter < best_inter_rot_diff:
+                best_inter_rot_diff = average_rot_diff_per_batch_inter
+
+                ckpt_path = os.path.join(log_path, 'best_inter.pth')
+                torch.save(network.state_dict(), ckpt_path)
+
+                logger_save.info(
+                    f'[CKPT SAVED][INTER] Epoch {epoch} | '
+                    f'best_inter_rot_diff = {best_inter_rot_diff:.4f}'
+                )
+
+            # ========= 3. all best =========
+            average_rot_diff_per_batch_all = (
+                    average_rot_diff_per_batch_intra +
+                    average_rot_diff_per_batch_inter
+            )
+
+            if average_rot_diff_per_batch_all < best_all_rot_diff:
+                best_all_rot_diff = average_rot_diff_per_batch_all
+
+                ckpt_path = os.path.join(log_path, 'best_all.pth')
+                torch.save(network.state_dict(), ckpt_path)
+
+                logger_save.info(
+                    f'[CKPT SAVED][ALL] Epoch {epoch} | '
+                    f'best_all_rot_diff = {best_all_rot_diff:.4f}'
+                )
+
+        ckpt_path = os.path.join(log_path, f'lastet.pth')
         torch.save(network.state_dict(), ckpt_path)
 
         logger_save.info(

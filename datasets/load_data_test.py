@@ -153,7 +153,6 @@ class PoseDataset(data.Dataset):
 
         print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>  pose loading is finished !  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         length_gapart = len(self.gapart_list)
-        length_npcs = len(self.npcs_list)
         length_pose = len(self.pose_list)
         length_R = len(self.rotation_list)
         length_T = len(self.translation_list)
@@ -173,7 +172,6 @@ class PoseDataset(data.Dataset):
         data_dict = {}
         index = self.index_gapart[idx]
         rotation = self.rotation_list[index].float()
-        t = self.translation_list[index]
         translation = self.translation_list[index].squeeze().float()
         if(torch.isnan(translation).any()):
             return self.__getitem__((idx + 1) % self.__len__())

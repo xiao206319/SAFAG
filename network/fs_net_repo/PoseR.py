@@ -4,11 +4,9 @@ import torch.nn.functional as F
 import math
 import absl.flags as flags
 from absl import app
-from tools.scs_utils import quat_normalize,quat_mul,axis_angle_to_quat
 
 EPS = 1e-8
 
-from config.config import *
 FLAGS = flags.FLAGS
 
 def safe_normalize(x, dim=-1, eps=1e-6):
