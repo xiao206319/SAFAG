@@ -1,0 +1,14 @@
+absl==0.0
+detectron2==0.6
+ipdb==0.13.13
+lib==4.0.0
+matplotlib==3.7.5
+mmcv==2.2.0
+mmengine==0.10.7
+numpy==1.24.3
+opencv_python==4.13.0.92
+six==1.17.0
+termcolor==3.3.0
+torch==2.0.0+cu118
+torchvision==0.15.0+cu118
+tqdm==4.67.3
