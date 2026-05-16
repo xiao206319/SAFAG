@@ -121,36 +121,63 @@ class SymAxisGMM(nn.Module):
 
 
 class SymmetryAwareLoss(nn.Module):
-    def __init__(self, eps=1e-8):
+    def __init__(self, num_samples=36, eps=1e-8):
+        """
+        num_samples: 每个轴采样角度数
+        eps: 数值稳定项
+        """
         super().__init__()
+        self.num_samples = num_samples
         self.eps = eps
+        self.register_buffer("angles", torch.linspace(0, 2 * torch.pi, steps=num_samples))
+
+    def quat_l2_min_sign(self, q1, q2):
+        """
+        q1, q2: [B,4]
+        返回对应的 min-sign L2 loss
+        """
+        diff1 = (q1 - q2) ** 2
+        diff2 = (q1 + q2) ** 2
+        return torch.min(diff1.sum(dim=-1), diff2.sum(dim=-1))
 
     def forward(self, pred_q, gt_q, pi_probs, axes, weighted_axis, log_probs=None):
+        """
+        pred_q:        [B,4]
+        gt_q:          [B,4]
+        pi_probs:      [B,3]
+        axes:          [3,3]
+        weighted_axis: [B,3]
+        """
+        weighted_axis = F.normalize(weighted_axis, dim=-1, eps=self.eps)
 
-        B = pred_q.size(0)
+        errs_per_angle = []
 
-        pred_q = F.normalize(pred_q, dim=-1)
-        gt_q   = F.normalize(gt_q, dim=-1)
+        for ang in self.angles:
+            # 正向旋转
+            q_rot_pos = axis_angle_to_quat(weighted_axis, ang)  # [B,4]
+            # 反向旋转
+            q_rot_neg = axis_angle_to_quat(-weighted_axis, ang)  # [B,4]
 
+            # 生成两组等价解
+            q_equiv_pos = quat_mul(gt_q, q_rot_pos)
+            q_equiv_neg = quat_mul(gt_q, q_rot_neg)
 
-        a = F.normalize(weighted_axis, dim=-1)
+            # 分别计算误差
+            err_pos = quat_angle(pred_q, q_equiv_pos)  # [B]
+            err_neg = quat_angle(pred_q, q_equiv_neg)  # [B]
 
-        R_pred = quaternion_to_rotation_matrix(pred_q)
-        R_gt   = quaternion_to_rotation_matrix(gt_q)
+            # 两方向取最小
+            err_min = torch.minimum(err_pos, err_neg)
+            errs_per_angle.append(err_min)
 
-        a = a.unsqueeze(-1)
-        v_pred = F.normalize(torch.matmul(R_pred, a), dim=1)
-        v_gt   = F.normalize(torch.matmul(R_gt,   a), dim=1)
-
-        dot = torch.abs(torch.sum(v_pred * v_gt, dim=1))
-        dot = dot.clamp(0.0+ 1e-7, 1.0- 1e-7)
-
-        ang_err = torch.acos(dot)
+        errs_per_angle = torch.stack(errs_per_angle, dim=-1)
+        min_err, _ = torch.min(errs_per_angle, dim=-1)  # [B]
+        loss_gmm = min_err.mean()
 
         if log_probs is None:
             log_probs = torch.log(pi_probs + 1e-8)
 
-        return ang_err.mean()
+        return loss_gmm
 
 class AdaptiveSymmetryPredictor(nn.Module):
     def __init__(self, n_components=3, hidden_rot=64, hidden_global=512, hidden_fuse=256, alpha=10.0):
@@ -391,6 +418,6 @@ class SymMirrorAwareLoss(nn.Module):
         total_quat_loss = min_err.mean()
 
 
-        total_loss = 2 * total_quat_loss +  geom_loss
+        total_loss = total_quat_loss +  2 * geom_loss
 
         return total_loss

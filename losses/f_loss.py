@@ -107,85 +107,120 @@ def generate_equiv_poses(R_gt: torch.Tensor, normals: list) -> torch.Tensor:
 
 
 class candidates_loss_axis(nn.Module):
-    def __init__(self, m_target=0.85):
+    def __init__(self, num_samples=36,m_target=0.85, min_sep_deg=0.5):
         super(candidates_loss_axis, self).__init__()
+        self.num_samples = num_samples
         self.m_target = m_target
+        self.min_sep = math.radians(min_sep_deg)
+        self.angles = torch.linspace(0, 2 * torch.pi, steps=num_samples)  # [N]
 
     def forward(self, q_cands, q_gt, sym_axis):
-
+        """
+        q_cands: [B,K,4]   候选四元数
+        q_gt:    [B,4]     GT 四元数
+        sym_axis:[B,3]     预测的对称轴 (单位化)
+        """
         B, K, _ = q_cands.shape
         q_cands = F.normalize(q_cands, dim=-1)
         q_gt = F.normalize(q_gt, dim=-1)
-        sym_axis = F.normalize(sym_axis, dim=-1)
+
+        # --- angles 跟随 sym_axis 的 device/dtype ---
+        angles = self.angles.to(sym_axis.device, sym_axis.dtype)
+
+        # 构造等价解集 (GT沿对称轴旋转多个角度)
+        equivs = []
+        for ang in angles:
+            q_rot_pos = axis_angle_to_quat(sym_axis, ang)  # [B,4]
+            q_rot_neg = axis_angle_to_quat(-sym_axis, ang)  # [B,4]
+            q_equiv_pos = quat_mul(q_gt, q_rot_pos)
+            q_equiv_neg = quat_mul(q_gt, q_rot_neg)
+
+            # 双方向取最小误差（无方向对称）
+            q_equiv = torch.stack([q_equiv_pos, q_equiv_neg], dim=1)  # [B,2,4]
+            equivs.append(q_equiv)
+
+        equivs = torch.stack(equivs, dim=1).view(B, -1, 4)  # [B, 2*num_angles, 4]
+
+        # 计算每个 candidate 和所有等价解的误差
+        loss_per_cand = []
+        for k in range(K):
+            cand = q_cands[:, k, :]                        # [B,4]
+            ang_errs = quat_angle(
+                cand.unsqueeze(1).expand(-1, equivs.size(1), -1),  # [B,N,4]
+                equivs                                             # [B,N,4]
+            )  # [B,N]
+            min_err, _ = torch.min(ang_errs, dim=-1)  # [B]
+            loss_per_cand.append(min_err)
+
+        loss_per_cand = torch.stack(loss_per_cand, dim=1)  # [B,K]
+        align_loss = loss_per_cand.mean()                  # scalar
+
+        total_loss = align_loss
+
+        return total_loss
 
 
-        R_cands = quaternion_to_rotation_matrix(q_cands)
-        R_gt = quaternion_to_rotation_matrix(q_gt).unsqueeze(1)
-        sym_axis = sym_axis.unsqueeze(1).unsqueeze(-1)
-
-
-        v_cands = torch.matmul(R_cands, sym_axis)
-        v_gt    = torch.matmul(R_gt, sym_axis)
-
-        v_cands = F.normalize(v_cands, dim=2)
-        v_gt    = F.normalize(v_gt, dim=2)
-
-
-        dot = torch.abs(torch.sum(v_cands * v_gt, dim=2))
-        dot = dot.clamp(0.0, 1.0)
-
-        dot = dot.clamp(0.0 + 1e-7, 1.0 - 1e-7)
-
-        ang_err = torch.acos(dot)
-
-        loss = ang_err.mean()
-
-        return loss
-
+#用于warmup阶段
 class CandidatesLossAxisMixture(nn.Module):
-
-    def __init__(self, beta=10, m_target=0.85):
+    def __init__(self, num_samples=36, beta=10,m_target=0.85, min_sep_deg=0.5):
         super().__init__()
+        self.register_buffer("angles", torch.linspace(0, 2 * torch.pi, steps=num_samples))
+        self.num_samples = num_samples
         self.beta = beta
         self.m_target = m_target
+        self.min_sep = math.radians(min_sep_deg)
+
+    def softmin(self, x):
+        w = F.softmax(-self.beta * x, dim=-1)
+        return (w * x).sum(dim=-1)
 
     def forward(self, q_cands, q_gt, axes):
-
         B, K, _ = q_cands.shape
-
         q_cands = F.normalize(q_cands, dim=-1)
-        q_gt    = F.normalize(q_gt, dim=-1)
+        q_gt = F.normalize(q_gt, dim=-1)
 
         device, dtype = q_gt.device, q_gt.dtype
+        angles = self.angles.to(device=device, dtype=dtype)
 
-        if not torch.is_tensor(axes):
-            axes = torch.tensor(axes, dtype=q_gt.dtype, device=q_gt.device)
-
-        if axes.dim() == 2:
+        if axes.dim() == 2:  # [3,3] -> [B,3,3]
             axes = axes.unsqueeze(0).expand(B, -1, -1)
+        elif axes is None:
+            axes = torch.eye(3, device=device, dtype=dtype).unsqueeze(0).expand(B, -1, -1)
+
         axes = F.normalize(axes, dim=-1)
 
-        R_cands = quaternion_to_rotation_matrix(q_cands)
-        R_gt    = quaternion_to_rotation_matrix(q_gt).unsqueeze(1)
-        per_axis_err = []
+        per_axis_loss = []
 
-        for i in range(3):
-            axis = axes[:, i, :].unsqueeze(1).unsqueeze(-1)
+        # -------- 对每个轴采样旋转等价解 --------
+        for k in range(3):
+            axis = axes[:, k, :]  # [B,3]
+            q_equiv_list = []
 
-            v_c = F.normalize(torch.matmul(R_cands, axis), dim=2)
-            v_g = F.normalize(torch.matmul(R_gt,    axis), dim=2)
+            for ang in angles:
+                q_rot_pos = axis_angle_to_quat(axis, ang)  # [B,4]
+                q_rot_neg = axis_angle_to_quat(-axis, ang)  # [B,4]
+                q_eq_pos = quat_mul(q_gt, q_rot_pos)
+                q_eq_neg = quat_mul(q_gt, q_rot_neg)
+                q_equiv_list.extend([q_eq_pos, q_eq_neg])
 
-            dot = torch.abs(torch.sum(v_c * v_g, dim=2)).clamp(0, 1)
-            dot = dot.clamp(0.0+ 1e-7, 1.0- 1e-7)
-            ang = torch.acos(dot).squeeze(-1)
+            q_equiv = torch.stack(q_equiv_list, dim=1)  # [B, 2N, 4]
+            q_equiv = F.normalize(q_equiv, dim=-1)
 
-            per_axis_err.append(ang.mean(dim=1))
+            # ---------- 比较所有候选 ----------
+            qc = q_cands.unsqueeze(2).expand(B, K, q_equiv.size(1), 4)
+            qe = q_equiv.unsqueeze(1).expand(B, K, q_equiv.size(1), 4)
+            err = quat_angle(qc, qe)  # [B,K,2N]
+            min_over_angle, _ = torch.min(err, dim=-1)  # [B,K]
+            min_over_cand= torch.mean(min_over_angle, dim=-1)  # [B]
+            per_axis_loss.append(min_over_cand)
 
-        per_axis_err = torch.stack(per_axis_err, dim=-1)
+        loss = torch.stack(per_axis_loss, dim=-1)
+        align_loss = loss.min(dim=-1)[0].mean()
 
-        loss = per_axis_err.min(dim=-1)[0]
+        total_loss = align_loss
 
-        return loss.mean()
+        return total_loss
+
 
 
 class CandidatesLossMirrorMixture(nn.Module):
@@ -257,7 +292,7 @@ class CandidatesLossMirrorMixture(nn.Module):
 
         if pts is not None:
             loss_geom = self.mirror_consistency_loss(pts, axes_obj)
-            total_loss =  2 * loss_angle + loss_geom
+            total_loss =  loss_angle + 2 * loss_geom
         else:
             total_loss = loss_angle
 
@@ -358,7 +393,7 @@ class candidates_loss_normal(nn.Module):
             geom_loss = ((loss_n1 + loss_n2) / 2).mean()
         else:
             geom_loss = ((loss_n1 + loss_n2 + loss_n3) / 3).mean()
-        total_loss =  2 * loss_angle + geom_loss
+        total_loss =  loss_angle + 2 * geom_loss
 
         return total_loss
 

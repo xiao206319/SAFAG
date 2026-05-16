@@ -144,7 +144,7 @@ def train(argv):
         os.makedirs(log_path)
 
     logger = setup_logger('train_log', os.path.join(FLAGS.model_save, 'log.txt'))
-    logger_save = setup_logger('save_log', os.path.join(FLAGS.model_save, f'val_log_{FLAGS.gapart}_save.txt'))
+    logger_save = setup_logger('save_log', os.path.join(FLAGS.model_save, f'save_log_{FLAGS.gapart}_save.txt'))
     logger_test = setup_logger('val_log',os.path.join(FLAGS.model_save, f'val_log_{FLAGS.gapart}_val.txt'))
     logger_loss = setup_logger('loss_log', os.path.join(FLAGS.model_save, f'loss_log_{FLAGS.gapart}_loss.txt'))
 
