@@ -36,7 +36,7 @@ flags.DEFINE_integer('accumulate', 1, 'Gradient accumulation steps.')
 flags.DEFINE_string('model_save', '/home/chenwenxiao/code/modelsave_all', 'Directory for saving checkpoints, logs, and TensorBoard files.')
 flags.DEFINE_integer('resume', 1, 'Whether to resume training from checkpoint.')
 flags.DEFINE_string('resume_model', '/home/chenwenxiao/code/modelsave_all/Round_Fixed_Handle/lastet.pth', 'Path of checkpoint used for resuming training.')
-flags.DEFINE_integer('resume_point', 126, 'Epoch index to resume from.')
+flags.DEFINE_integer('resume_point', 127, 'Epoch index to resume from.')
 flags.DEFINE_string('test_model', '', 'Path of checkpoint used for test-only evaluation.')
 
 # Main Loss Weights

@@ -37,7 +37,7 @@ def quaternion_to_rotation_matrix(quat):
 
     return rot_mat
 
-def rot_error_axis_symmetric(R1, R2, pred_axis=None, eps=1e-8):
+def rot_error_axis_symmetric(R1, R2, eps=1e-8):
     if not torch.is_tensor(R1):
         R1 = torch.tensor(R1, dtype=torch.float32)
     if not torch.is_tensor(R2):
@@ -48,16 +48,7 @@ def rot_error_axis_symmetric(R1, R2, pred_axis=None, eps=1e-8):
     R2 = R2.to(device_, dtype)
 
     if FLAGS.gapart == 'Round_Fixed_Handle':
-        if pred_axis is None:
-            raise ValueError(
-                "pred_axis must be provided for Round_Fixed_Handle."
-            )
-
-        if not torch.is_tensor(pred_axis):
-            pred_axis = torch.tensor(pred_axis, dtype=dtype, device=device_)
-
-        sym_axis = pred_axis.to(device_, dtype)
-
+        sym_axis = torch.tensor([0.0, 1.0, 0.0], device=device_, dtype=dtype)
     else:
         sym_axis = torch.tensor([0.0, 0.0, 1.0], device=device_, dtype=dtype)
 
@@ -329,7 +320,7 @@ def train(argv):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
                     if (sym == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,output_dict_val['weighted_axis'][j, :])
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
                     if (sym == 2):
                         angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
 
@@ -440,7 +431,7 @@ def train(argv):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
                     if (sym == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,output_dict_val['weighted_axis'][j, :])
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
                     if (sym == 2):
                         angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
 

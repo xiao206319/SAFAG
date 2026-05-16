@@ -120,19 +120,67 @@ The numeric folders correspond to different GAPart classes:
 9: Hinge_Handle
 ```
 
-## Model
-
-
-
 ## Quick Satrt
 
 #### Traning
 
+Before training, please make sure that the processed dataset has been downloaded and the dataset path has been correctly set in `config/config.py`.
 
+You can modify the training configuration directly in `config/config.py`, for example:
+
+```python
+flags.DEFINE_string('dataset_path', 'yourpath', 'Root path of the processed GAPart dataset.')
+flags.DEFINE_string('gapart', 'gapart_name', 'GAPart category to train/test.')
+flags.DEFINE_string('model_save', 'yourpath', 'Directory for saving checkpoints, logs, and TensorBoard files.')
+
+flags.DEFINE_integer('train', 1, '1 for training mode, 0 for evaluation/inference mode.')
+flags.DEFINE_integer('resume', 0, 'Whether to resume training from checkpoint.')
+flags.DEFINE_string('resume_model', '', 'Path of checkpoint used for resuming training.')
+flags.DEFINE_integer('resume_point', 0, 'Epoch index to resume from.')
+```
+
+Alternatively, you can override these flags from the command line:
+
+```
+python train_test.py \
+  --gapart=gapart_name \
+  --dataset_path=yourpath\
+  --model_save=yourpath \
+  --resume=0
+```
+
+To resume training from a checkpoint:
+
+```
+python train_test.py \
+  --gapart=gapart_name \
+  --dataset_path=yourpath \
+  --model_save=yourpath \
+  --resume=1 \
+  --resume_model=yourpath.pth \
+  --resume_point==epoch_number
+```
 
 #### Evaluation
 
+Before evaluation, please make sure that the dataset path and checkpoint path are correctly set in `config/config.py`.
 
+```python
+flags.DEFINE_string('dataset_path', 'yourpath', 'Root path of the processed GAPart dataset.')
+flags.DEFINE_string('gapart', 'gapart_name', 'GAPart category to evaluate.')
+flags.DEFINE_string('test_model', 'yourpath.pth', 'Path of checkpoint used for test-only evaluation.')
+flags.DEFINE_integer('train', 0, '1 for training mode, 0 for evaluation/inference mode.')
+```
+
+You can also override the configuration from the command line. For example:
+
+```
+python evaluation.py \
+  --gapart=gapart_name \
+  --dataset_path=yourpath \
+  --test_model=yourpath.pth \
+  --train 0
+```
 
 ## Citation
 
