@@ -66,7 +66,7 @@ This project uses a processed version of the GAPartNet dataset. The processed da
 Please also refer to the official GAPartNet project page for the original dataset, license terms, and detailed usage instructions:
 
 - Official GAPartNet website: [https://pku-epic.github.io/GAPartNet/](https://pku-epic.github.io/GAPartNet/)
-- Processed dataset used in this project: [Data Download]()
+- Processed dataset used in this project: [Data Download]( https://pan.baidu.com/s/1gnGCoCAiBaP6YT7nDVBmGg?pwd=3qn7)
 
 After downloading and extracting,  the processed dataset should be organized as follows:
 
