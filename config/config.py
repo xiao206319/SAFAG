@@ -4,7 +4,7 @@ import absl.flags as flags
 
 
 # Dataset Settings
-flags.DEFINE_string('dataset_path', '/media/ubuntu/9cd6fab2-42b6-40e7-9260-a20c62d641c1/yxy/test_third', 'Root path of the processed GAPart dataset.')
+flags.DEFINE_string('dataset_path', '/media/hhhar/hhd/cwx/process_gapart', 'Root path of the processed GAPart dataset.')
 flags.DEFINE_string('gapart', 'all', 'GAPart category to train/test, or all.')
 flags.DEFINE_integer('n_points', 1024, 'Number of input points for each sample.')
 flags.DEFINE_integer('traindata_size', 8406, 'Total number of training samples.')
@@ -35,8 +35,8 @@ flags.DEFINE_integer('accumulate', 1, 'Gradient accumulation steps.')
 # Checkpoint / Logging Settings
 flags.DEFINE_string('model_save', '/home/chenwenxiao/code/modelsave_all', 'Directory for saving checkpoints, logs, and TensorBoard files.')
 flags.DEFINE_integer('resume', 0, 'Whether to resume training from checkpoint.')
-flags.DEFINE_string('resume_model', '/home/chenwenxiao/code/modelsave_all/Round_Fixed_Handle/lastet.pth', 'Path of checkpoint used for resuming training.')
-flags.DEFINE_integer('resume_point', 178, 'Epoch index to resume from.')
+flags.DEFINE_string('resume_model', '/home/chenwenxiao/code/modelsave_all/Hinge_Lid/lastet.pth', 'Path of checkpoint used for resuming training.')
+flags.DEFINE_integer('resume_point', 69, 'Epoch index to resume from.')
 flags.DEFINE_string('test_model', '', 'Path of checkpoint used for test-only evaluation.')
 
 # Main Loss Weights

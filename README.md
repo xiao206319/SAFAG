@@ -123,6 +123,7 @@ The numeric folders correspond to different GAPart classes:
 ## Quick Satrt
 
 #### Traning
+You can download our model here: [Model Dowload](https://pan.baidu.com/s/1mBzCrJEZmkvchyXa7mGwdQ?pwd=zvbm)
 
 Before training, please make sure that the processed dataset has been downloaded and the dataset path has been correctly set in `config/config.py`.
 

@@ -170,8 +170,7 @@ class SAFAG(nn.Module):
                 recon_loss = FLAGS.recon_w * nn.L1Loss()(recon, pts)
                 if epoch > FLAGS.warm_up_epoch:
                     cal_loss_dict = self.simplified_loss(gt_quaternion, gt_trans_umeyama, p_Q, p_T)
-                    candidates_loss, candidates_loss_dict = self.candidates_loss(quaternion_candidates, gt_quaternion,
-                                                                                 sym=sym)
+                    candidates_loss, candidates_loss_dict = self.candidates_loss(quaternion_candidates, gt_quaternion)
                     loss_dict = {}
                     loss_dict['rot_loss'] = FLAGS.rot_w * cal_loss_dict['rot_loss']
                     loss_dict['trans_loss'] = FLAGS.trans_w * cal_loss_dict['trans_loss']
@@ -179,7 +178,7 @@ class SAFAG(nn.Module):
                     loss_dict['recon_loss'] = recon_loss
                 else:
                     loss_dict = {}
-                    candidates_loss, cal_loss_dict = self.candidates_loss(quaternion_candidates, gt_quaternion, sym=sym)
+                    candidates_loss, cal_loss_dict = self.candidates_loss(quaternion_candidates, gt_quaternion)
                     loss_dict['candidates_loss'] = 5 * candidates_loss
                     loss_dict['recon_loss'] = recon_loss
 

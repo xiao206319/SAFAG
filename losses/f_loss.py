@@ -393,7 +393,7 @@ class candidates_loss_normal(nn.Module):
             geom_loss = ((loss_n1 + loss_n2) / 2).mean()
         else:
             geom_loss = ((loss_n1 + loss_n2 + loss_n3) / 3).mean()
-        total_loss =  loss_angle + 2 * geom_loss
+        total_loss =  2 * loss_angle +  geom_loss
 
         return total_loss
 

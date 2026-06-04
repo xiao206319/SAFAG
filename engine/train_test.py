@@ -37,78 +37,59 @@ def quaternion_to_rotation_matrix(quat):
 
     return rot_mat
 
-def rot_error_axis_symmetric(R1, R2, eps=1e-8):
-    if not torch.is_tensor(R1):
-        R1 = torch.tensor(R1, dtype=torch.float32)
-    if not torch.is_tensor(R2):
-        R2 = torch.tensor(R2, dtype=torch.float32)
+def rot_error_axis_symmetric(R1, R2, sym_axis, eps=1e-8):
+    if not torch.is_tensor(R1): R1 = torch.tensor(R1)
+    if not torch.is_tensor(R2): R2 = torch.tensor(R2)
+    if not torch.is_tensor(sym_axis): sym_axis = torch.tensor(sym_axis)
 
-    device_, dtype = R1.device, R1.dtype
-    R1 = R1.to(device_, dtype)
-    R2 = R2.to(device_, dtype)
-
-    if FLAGS.gapart == 'Round_Fixed_Handle':
-        sym_axis = torch.tensor([0.0, 1.0, 0.0], device=device_, dtype=dtype)
-    else:
-        sym_axis = torch.tensor([0.0, 0.0, 1.0], device=device_, dtype=dtype)
-
-    sym_axis = F.normalize(sym_axis, dim=0, eps=eps)
+    device, dtype = R1.device, R1.dtype
+    R1, R2 = R1.to(device, dtype), R2.to(device, dtype)
+    sym_axis = F.normalize(sym_axis.to(device, dtype), dim=0, eps=eps)
 
     v1 = F.normalize(R1 @ sym_axis, dim=0, eps=eps)
     v2 = F.normalize(R2 @ sym_axis, dim=0, eps=eps)
 
     cosang = torch.abs(torch.dot(v1, v2)).clamp(-1.0, 1.0)
     theta = torch.acos(cosang) * 180.0 / torch.pi
-
-    return theta.item() if torch.is_tensor(theta) else theta
+    return theta
 
 def householder_from_normal(n: torch.Tensor) -> torch.Tensor:
+
     n = n / (n.norm(dim=-1, keepdim=True) + 1e-8)
     I = torch.eye(3, device=n.device, dtype=n.dtype).expand(*n.shape[:-1], 3, 3)
     nnT = n.unsqueeze(-1) @ n.unsqueeze(-2)
     return I - 2.0 * nnT
 
+def generate_equiv_poses_single(R_gt: torch.Tensor, normals: list) -> torch.Tensor:
 
-def generate_equiv_poses_single(R_gt: torch.Tensor) -> torch.Tensor:
-    device = R_gt.device
-    dtype = R_gt.dtype
-
-    normals = [
-        torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype),
-        torch.tensor([0.0, 1.0, 0.0], device=device, dtype=dtype),
-        torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype),
-    ]
-
+    M = len(normals)
     S_list = [householder_from_normal(n) for n in normals]
-    I3 = torch.eye(3, device=device, dtype=dtype)
+    I3 = torch.eye(3, device=R_gt.device, dtype=R_gt.dtype)
 
-    combos = list(itertools.product([0, 1], repeat=len(normals)))
-
+    combos = list(itertools.product([0, 1], repeat=M))
     R_equivs = []
     for combo in combos:
         S_combo = I3.clone()
-
         for k, flip in enumerate(combo):
             if flip:
                 S_combo = S_list[k] @ S_combo
-
         R_equivs.append(R_gt @ S_combo)
 
     return torch.stack(R_equivs, dim=0)
 
 
-def mirror_normal_error_multi(R1, R2, eps=1e-8):
+def mirror_normal_error_multi(R1, R2, normals, eps=1e-8):
 
-    if not torch.is_tensor(R1):
-        R1 = torch.tensor(R1, dtype=torch.float32)
-    if not torch.is_tensor(R2):
-        R2 = torch.tensor(R2, dtype=torch.float32)
+    if not torch.is_tensor(R1): R1 = torch.tensor(R1, dtype=torch.float32)
+    if not torch.is_tensor(R2): R2 = torch.tensor(R2, dtype=torch.float32)
+    if not torch.is_tensor(normals): normals = torch.tensor(normals, dtype=torch.float32)
 
     device, dtype = R1.device, R1.dtype
     R1 = R1.to(device=device, dtype=dtype)
     R2 = R2.to(device=device, dtype=dtype)
+    normals = F.normalize(normals.to(device=device, dtype=dtype), dim=-1, eps=eps)
 
-    R_equivs = generate_equiv_poses_single(R1)
+    R_equivs = generate_equiv_poses_single(R1, normals)
 
     errs = []
     for R_eq in R_equivs:
@@ -120,7 +101,6 @@ def mirror_normal_error_multi(R1, R2, eps=1e-8):
 
     errs = torch.stack(errs)
     min_err = errs.min()
-
     return (min_err * 180.0 / torch.pi).item()
 
 def rot_error(r_gt,r_pred):
@@ -302,6 +282,11 @@ def train(argv):
                 else:
                     sym = int(data['sym_info'])
 
+
+                if sym == 2:
+                    n1, n2, n3 = output_dict_val['sym_normals']
+                    sym_normals = torch.stack((n1, n2, n3), dim=1).to(device)
+
                 assert len(gt_rot_list)==len(gt_trans_list),'data loading failed'
 
                 total_angle_diff = 0
@@ -320,9 +305,11 @@ def train(argv):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
                     if (sym == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,
+                                                              output_dict_val['weighted_axis'][j, :])
                     if (sym == 2):
-                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
+                        selected = sym_normals[j, :].cpu().numpy()
+                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation, selected)
 
                     if not math.isnan(angle_diff):
                         translation_diff = np.linalg.norm(gt_translation - pred_translation)
@@ -413,6 +400,10 @@ def train(argv):
                 gt_rot_list = output_dict_val['gt_R'].to(device)
                 gt_trans_list = output_dict_val['gt_t'].to(device)
 
+                if sym == 2:
+                    n1, n2, n3 = output_dict_val['sym_normals']
+                    sym_normals = torch.stack((n1, n2, n3), dim=1).to(device)
+
                 assert len(gt_rot_list)==len(gt_trans_list),'data loading failed'
 
                 total_angle_diff = 0
@@ -431,9 +422,11 @@ def train(argv):
                         angle_diff = rot_error(pred_rotation, gt_rotation)
 
                     if (sym == 1):
-                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation)
+                        angle_diff = rot_error_axis_symmetric(pred_rotation, gt_rotation,
+                                                              output_dict_val['weighted_axis'][j, :])
                     if (sym == 2):
-                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation)
+                        selected = sym_normals[j, :].cpu().numpy()
+                        angle_diff = mirror_normal_error_multi(gt_rotation, pred_rotation, selected)
 
                     if not math.isnan(angle_diff):
                         translation_diff = np.linalg.norm(gt_translation - pred_translation)

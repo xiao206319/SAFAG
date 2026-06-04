@@ -15,7 +15,6 @@ from absl import flags
 from config.config import *
 from network.SAFAGPose_test import SAFAG
 from datasets.load_data_test import PoseDataset
-from tools.eval_utils import setup_logger
 from tools.vis_utils import *
 
 
@@ -40,20 +39,19 @@ def quaternion_to_rotation_matrix(quat):
     return rot_mat
 
 
-def rot_error_axis_symmetric(R1, R2, eps=1e-8):
+def rot_error_axis_symmetric(R1, R2, sym_axis, eps=1e-8):
     if not torch.is_tensor(R1):
         R1 = torch.tensor(R1, dtype=torch.float32)
     if not torch.is_tensor(R2):
         R2 = torch.tensor(R2, dtype=torch.float32)
+    if not torch.is_tensor(sym_axis):
+        sym_axis = torch.tensor(sym_axis, dtype=torch.float32)
 
     device_, dtype = R1.device, R1.dtype
-    R1 = R1.to(device_, dtype)
-    R2 = R2.to(device_, dtype)
 
-    if FLAGS.gapart == 'Round_Fixed_Handle':
-        sym_axis = torch.tensor([0.0, 1.0, 0.0], device=device_, dtype=dtype)
-    else:
-        sym_axis = torch.tensor([0.0, 0.0, 1.0], device=device_, dtype=dtype)
+    R1 = R1.to(device=device_, dtype=dtype)
+    R2 = R2.to(device=device_, dtype=dtype)
+    sym_axis = sym_axis.to(device=device_, dtype=dtype)
 
     sym_axis = F.normalize(sym_axis, dim=0, eps=eps)
 
@@ -74,20 +72,12 @@ def householder_from_normal(n: torch.Tensor) -> torch.Tensor:
     return I - 2.0 * nnT
 
 
-def generate_equiv_poses_single(R_gt: torch.Tensor) -> torch.Tensor:
-    device_ = R_gt.device
-    dtype = R_gt.dtype
-
-    normals = [
-        torch.tensor([1.0, 0.0, 0.0], device=device_, dtype=dtype),
-        torch.tensor([0.0, 1.0, 0.0], device=device_, dtype=dtype),
-        torch.tensor([0.0, 0.0, 1.0], device=device_, dtype=dtype),
-    ]
-
+def generate_equiv_poses_single(R_gt: torch.Tensor, normals: list) -> torch.Tensor:
+    M = len(normals)
     S_list = [householder_from_normal(n) for n in normals]
-    I3 = torch.eye(3, device=device_, dtype=dtype)
+    I3 = torch.eye(3, device=R_gt.device, dtype=R_gt.dtype)
 
-    combos = list(itertools.product([0, 1], repeat=len(normals)))
+    combos = list(itertools.product([0, 1], repeat=M))
     R_equivs = []
 
     for combo in combos:
@@ -102,17 +92,22 @@ def generate_equiv_poses_single(R_gt: torch.Tensor) -> torch.Tensor:
     return torch.stack(R_equivs, dim=0)
 
 
-def mirror_normal_error_multi(R1, R2, eps=1e-8):
+def mirror_normal_error_multi(R1, R2, normals, eps=1e-8):
     if not torch.is_tensor(R1):
         R1 = torch.tensor(R1, dtype=torch.float32)
     if not torch.is_tensor(R2):
         R2 = torch.tensor(R2, dtype=torch.float32)
+    if not torch.is_tensor(normals):
+        normals = torch.tensor(normals, dtype=torch.float32)
 
     device_, dtype = R1.device, R1.dtype
+
     R1 = R1.to(device=device_, dtype=dtype)
     R2 = R2.to(device=device_, dtype=dtype)
+    normals = normals.to(device=device_, dtype=dtype)
+    normals = F.normalize(normals, dim=-1, eps=eps)
 
-    R_equivs = generate_equiv_poses_single(R1)
+    R_equivs = generate_equiv_poses_single(R1, normals)
 
     errs = []
 
@@ -178,7 +173,7 @@ def load_checkpoint_to_network(network, ckpt_path):
     print(f"[Loaded checkpoint] {ckpt_path}")
 
 
-def test_one_split(network, dataset, split_name, logger_test, eval_epoch):
+def test_one_split(network, dataset, split_name, eval_epoch):
     test_dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=FLAGS.batch_size,
@@ -191,8 +186,6 @@ def test_one_split(network, dataset, split_name, logger_test, eval_epoch):
     progress_bar_test = tqdm(enumerate(test_dataloader), total=len(test_dataloader))
 
     print(f'test_{split_name} !!!')
-    logger_test.info(f'test_{split_name} started !!!')
-    logger_test.info(f'test_{split_name} sample num: {len(dataset)}')
 
     total_angle_diff_per_epoch = 0.0
     total_translation_diff_per_epoch = 0.0
@@ -228,6 +221,10 @@ def test_one_split(network, dataset, split_name, logger_test, eval_epoch):
 
             sym = parse_batch_sym(data['sym_info'])
 
+            if sym == 2:
+                n1, n2, n3 = output_dict_val['sym_normals']
+                sym_normals = torch.stack((n1, n2, n3), dim=1).to(device)
+
             assert len(gt_rot_list) == len(gt_trans_list), 'data loading failed'
 
             total_angle_diff = 0.0
@@ -249,13 +246,16 @@ def test_one_split(network, dataset, split_name, logger_test, eval_epoch):
                 elif sym == 1:
                     angle_diff = rot_error_axis_symmetric(
                         torch.tensor(pred_rotation, device=device, dtype=torch.float32),
-                        torch.tensor(gt_rotation, device=device, dtype=torch.float32)
+                        torch.tensor(gt_rotation, device=device, dtype=torch.float32),
+                        output_dict_val['weighted_axis'][j, :]
                     )
 
                 elif sym == 2:
+                    selected = sym_normals[j, :].detach().cpu().numpy()
                     angle_diff = mirror_normal_error_multi(
                         gt_rotation,
-                        pred_rotation
+                        pred_rotation,
+                        selected
                     )
 
                 else:
@@ -312,26 +312,6 @@ def test_one_split(network, dataset, split_name, logger_test, eval_epoch):
     average_rot_diff_per_batch = total_angle_diff_per_epoch / len(test_dataloader)
     average_trans_diff_per_batch = total_translation_diff_per_epoch / len(test_dataloader)
 
-    logger_test.info(f'test_{split_name} diff:\n')
-    logger_test.info(
-        f'average_rot_diff:{average_rot_diff_per_batch:.4f} \n'
-        f'average_trans_diff:{average_trans_diff_per_batch:.4f} \n'
-        f'best_rot_diff:{best_angle_diff:.4f} \n'
-        f'best_translation_diff:{best_translation_diff:.4f} \n'
-        f'Acc(10° 10cm): {acc_10deg_10cm:.2f}% \n'
-        f'Acc(5° 5cm): {acc_5deg_5cm:.2f}% \n'
-        f'Acc(5° 2cm): {acc_5deg_2cm:.2f}% \n'
-    )
-
-    print(f'\n========== test_{split_name} result ==========')
-    print(f'sample_num: {len(dataset)}')
-    print(f'average_rot_diff: {average_rot_diff_per_batch:.4f}')
-    print(f'average_trans_diff: {average_trans_diff_per_batch:.4f}')
-    print(f'best_rot_diff: {best_angle_diff:.4f}')
-    print(f'best_translation_diff: {best_translation_diff:.4f}')
-    print(f'Acc(10° 10cm): {acc_10deg_10cm:.2f}%')
-    print(f'Acc(5° 5cm): {acc_5deg_5cm:.2f}%')
-    print(f'Acc(5° 2cm): {acc_5deg_2cm:.2f}%')
 
     return {
         f'{split_name}_average_rot_diff': average_rot_diff_per_batch,
@@ -351,20 +331,8 @@ def test(argv):
     log_path = os.path.join(FLAGS.model_save, FLAGS.gapart)
     os.makedirs(log_path, exist_ok=True)
 
-    logger_test = setup_logger(
-        'test_only_log',
-        os.path.join(FLAGS.model_save, f'test_only_{FLAGS.gapart}.txt')
-    )
 
     eval_epoch = FLAGS.warm_up_epoch + 1
-
-    logger_test.info('==================================================')
-    logger_test.info(f'Test started at {time.strftime("%Y-%m-%d %H:%M:%S")}')
-    logger_test.info(f'gapart: {FLAGS.gapart}')
-    logger_test.info(f'test_model: {FLAGS.test_model}')
-    logger_test.info(f'eval_epoch: {eval_epoch}')
-    logger_test.info('==================================================')
-
     network = SAFAG(gapart=FLAGS.gapart)
     network = network.to(device)
 
@@ -385,18 +353,10 @@ def test(argv):
         n_pts=FLAGS.n_points
     )
 
-    print(f"[Test] gapart = {FLAGS.gapart}")
-    print(f"[Test] checkpoint = {FLAGS.test_model}")
-    print(f"[Test] eval_epoch = {eval_epoch}")
-    print(f"[Test] device = {device}")
-    print(f"[Test] intra sample num = {len(val_dataset_intra)}")
-    print(f"[Test] inter sample num = {len(val_dataset_inter)}")
-
     intra_result = test_one_split(
         network=network,
         dataset=val_dataset_intra,
         split_name='intra',
-        logger_test=logger_test,
         eval_epoch=eval_epoch
     )
 
@@ -404,24 +364,25 @@ def test(argv):
         network=network,
         dataset=val_dataset_inter,
         split_name='inter',
-        logger_test=logger_test,
         eval_epoch=eval_epoch
     )
 
-    all_rot_diff = (
-        intra_result['intra_average_rot_diff'] +
-        inter_result['inter_average_rot_diff']
-    )
 
-    logger_test.info('==================================================')
-    logger_test.info('Final Summary')
-    logger_test.info(f"all_rot_diff(intra + inter): {all_rot_diff:.4f}")
-    logger_test.info('==================================================')
 
-    print('\n========== Final Summary ==========')
-    print(f"intra_average_rot_diff: {intra_result['intra_average_rot_diff']:.4f}")
-    print(f"inter_average_rot_diff: {inter_result['inter_average_rot_diff']:.4f}")
-    print(f"all_rot_diff(intra + inter): {all_rot_diff:.4f}")
+    print('==================================================')
+    print('Final Summary')
+    print(f"intra_rot_diff: {intra_result['intra_average_rot_diff']:.4f}")
+    print(f"inter_rot_diff: {inter_result['inter_average_rot_diff']:.4f}")
+    print(f"intra_trans_diff: {intra_result['intra_average_trans_diff']:.4f}")
+    print(f"inter_trans_diff: {inter_result['inter_average_trans_diff']:.4f}")
+    print(f"intra_acc_10deg_10cm: {intra_result['intra_acc_10deg_10cm']:.2f}%")
+    print(f"inter_acc_10deg_10cm: {inter_result['inter_acc_10deg_10cm']:.2f}%")
+    print(f"intra_acc_5deg_5cm: {intra_result['intra_acc_5deg_5cm']:.2f}%")
+    print(f"inter_acc_5deg_5cm: {inter_result['inter_acc_5deg_5cm']:.2f}%")
+    print(f"intra_acc_5deg_2cm: {intra_result['intra_acc_5deg_2cm']:.2f}%")
+    print(f"inter_acc_5deg_2cm: {inter_result['inter_acc_5deg_2cm']:.2f}%")
+    print('==================================================')
+
 
 
 if __name__ == "__main__":

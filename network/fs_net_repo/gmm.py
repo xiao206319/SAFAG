@@ -418,6 +418,6 @@ class SymMirrorAwareLoss(nn.Module):
         total_quat_loss = min_err.mean()
 
 
-        total_loss = total_quat_loss +  2 * geom_loss
+        total_loss =2 * total_quat_loss +   geom_loss
 
         return total_loss
