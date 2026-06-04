@@ -489,51 +489,6 @@ def train(argv):
 
         logger.info('>>>>>>>>----------Epoch {:02d} train finish---------<<<<<<<<\n'.format(epoch))
 
-        # ---------- 前 10 个 epoch 不参与 ----------
-        if epoch > 10:
-            os.makedirs(log_path, exist_ok=True)
-
-            # ========= 1. intra best =========
-            if average_rot_diff_per_batch_intra < best_intra_rot_diff:
-                best_intra_rot_diff = average_rot_diff_per_batch_intra
-
-                ckpt_path = os.path.join(log_path, 'best_intra.pth')
-                torch.save(network.state_dict(), ckpt_path)
-
-                logger_save.info(
-                    f'[CKPT SAVED][INTRA] Epoch {epoch} | '
-                    f'best_intra_rot_diff = {best_intra_rot_diff:.4f}'
-                )
-
-            # ========= 2. inter best =========
-            if average_rot_diff_per_batch_inter < best_inter_rot_diff:
-                best_inter_rot_diff = average_rot_diff_per_batch_inter
-
-                ckpt_path = os.path.join(log_path, 'best_inter.pth')
-                torch.save(network.state_dict(), ckpt_path)
-
-                logger_save.info(
-                    f'[CKPT SAVED][INTER] Epoch {epoch} | '
-                    f'best_inter_rot_diff = {best_inter_rot_diff:.4f}'
-                )
-
-            # ========= 3. all best =========
-            average_rot_diff_per_batch_all = (
-                    average_rot_diff_per_batch_intra +
-                    average_rot_diff_per_batch_inter
-            )
-
-            if average_rot_diff_per_batch_all < best_all_rot_diff:
-                best_all_rot_diff = average_rot_diff_per_batch_all
-
-                ckpt_path = os.path.join(log_path, 'best_all.pth')
-                torch.save(network.state_dict(), ckpt_path)
-
-                logger_save.info(
-                    f'[CKPT SAVED][ALL] Epoch {epoch} | '
-                    f'best_all_rot_diff = {best_all_rot_diff:.4f}'
-                )
-
         ckpt_path = os.path.join(log_path, f'lastet.pth')
         torch.save(network.state_dict(), ckpt_path)
 
